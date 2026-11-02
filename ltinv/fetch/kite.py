@@ -112,7 +112,10 @@ class KiteClient:
     def holdings(self) -> list[Holding]:
         out = []
         for h in self._call("GET", "/portfolio/holdings") or []:
-            qty = int(h.get("quantity") or 0) + int(h.get("t1_quantity") or 0)
+            # settled + T1 (bought yesterday), less what was sold today (used_quantity);
+            # today's buys appear only from tomorrow (as T1).
+            qty = (int(h.get("quantity") or 0) + int(h.get("t1_quantity") or 0)
+                   - int(h.get("used_quantity") or 0))
             out.append(Holding(
                 symbol=str(h["tradingsymbol"]).upper(),
                 exchange=h.get("exchange"),
@@ -123,7 +126,24 @@ class KiteClient:
         return out
 
     def trades(self) -> list[dict[str, Any]]:
-        return self._call("GET", "/trades") or []
+        """Today's executed trades (Kite keeps only the current day), normalised."""
+        out = []
+        for t in self._call("GET", "/trades") or []:
+            ts = str(t.get("fill_timestamp") or t.get("exchange_timestamp") or t.get("order_timestamp") or "")
+            out.append({
+                "trade_id": str(t["trade_id"]), "order_id": str(t.get("order_id") or ""),
+                "symbol": str(t["tradingsymbol"]).upper(), "exchange": t.get("exchange"),
+                "side": str(t["transaction_type"]).upper(), "qty": int(t["quantity"]),
+                "price": float(t["average_price"]), "product": str(t.get("product") or "").upper(),
+                "trade_date": ts[:10], "timestamp": ts,
+            })
+        return out
+
+    def cash(self) -> tuple[float, dict]:
+        """Equity segment net available margin (INR) and the raw equity block."""
+        data = self._call("GET", "/user/margins") or {}
+        eq = data.get("equity") or {}
+        return float(eq.get("net") or 0.0), eq
 
     # -- transport --------------------------------------------------------------------
 

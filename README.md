@@ -28,8 +28,8 @@ the suite approves decisions and **you place trades yourself in Kite**: it never
 | Phase | Outcome | Status |
 | --- | --- | --- |
 | 0 | Repo, config, DB, Kite login + holdings, bhavcopy prices, first thesis | **done** |
-| 1 | Filings feeds, red-flag rules, Claude Code judging, proposals, digest, cron | **in progress** |
-| 2 | Risk check, approvals, reconcile, Streamlit dashboard | |
+| 1 | Filings feeds, red-flag rules, Claude Code judging, proposals, digest, cron | **done** (5-day soak running) |
+| 2 | Risk check, tax lots, approvals, reconcile, Streamlit dashboard | **built**, deploy after the soak |
 | 3 | Monthly loop: shareholding, XBRL financials, metrics, valuation, health card | |
 | 4 | Quarterly loop: concall, LLM review, journal scoring | |
 | 5 | Dashboard completion, Claude Code skills, hardening | |
@@ -48,6 +48,16 @@ the suite approves decisions and **you place trades yourself in Kite**: it never
 | `ltinv flags list\|show\|resolve` | Red flags; `resolve` records a verdict (quote required to confirm, severity can only go down). |
 | `ltinv proposal list\|show\|create\|expire` | SELL proposals from confirmed fatal/serious flags or thesis kill criteria. Never orders. |
 | `ltinv run daily` / `digest daily` | The evening pipeline and its markdown digest. Schedule: `cron/ltinv.cron`. |
+| `ltinv proposal approve\|reject ID` | Approve (re-runs the risk check; a breach needs `--note`) or reject with a reason. Valid 5 trading days, 1 for fatal flags and kill criteria. |
+| `ltinv risk check\|simulate` | Stock, sector, top-5 and cash limits; stocks only, as % of the whole portfolio. |
+| `ltinv tax show SYM` | FIFO lots, STCG/LTCG, FY exemption left, "wait N days saves ₹X". |
+| `ltinv import tradebook FILE\|-` | Console tradebook CSV, for buy dates Kite's API doesn't give. |
+| `ltinv dashboard` | Streamlit on 127.0.0.1:8501: Overview and Proposals. See `deploy/README.md`. |
+
+Every Kite sync (`fetch holdings`, or `run daily` after you log in) also stores Kite cash and
+today's trades, and reconciles: delivery trades fill approved proposals (`reconciled` when
+complete), trades with no approved proposal are journaled as `unplanned`, and intraday (MIS)
+trades are ignored and netted out of tax lots.
 
 ### Red flags, end to end
 

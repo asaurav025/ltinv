@@ -22,7 +22,7 @@ EQUITY_L = (
     "SYMBOL,NAME OF COMPANY, SERIES, DATE OF LISTING, PAID UP VALUE, MARKET LOT, ISIN NUMBER, FACE VALUE\n"
     "OMPOWER,Om Power Transmission Limited,EQ,01-JAN-2025,10,1,INE000OMP011,10\n"
     "NARMADA,Narmada Agrobase Limited,EQ,01-JAN-2020,10,1,INE000NAR011,10\n"
-    "UNIVCABLES,Universal Cables Limited,EQ,17-MAY-1995,10,1,INE279A01012,10\n"
+    "TCS,Tata Consultancy Services Limited,EQ,25-AUG-2004,1,1,INE467B01029,1\n"
 ).encode()
 RULES = redflags.load_rules({"rules": [
     {"id": "auditor_resignation", "severity": "fatal", "detect": "subject", "text": "Statutory auditor resigns"},
@@ -290,6 +290,6 @@ def test_run_daily_end_to_end_offline(conn, settings, monkeypatch):
     report = pipeline.run_daily(conn, settings, http())
     got = {s.step: s.status for s in report.steps}
     assert got == {"holdings": "skipped", "prices": "ok", "filings": "ok", "scan": "ok",
-                   "proposals": "ok", "digest": "ok", "push": "skipped"}, report.steps
+                   "proposals": "ok", "risk": "ok", "digest": "ok", "push": "skipped"}, report.steps
     assert conn.execute("SELECT COUNT(*) FROM flags").fetchone()[0] == 2  # two OM POWER governance items
     assert list((settings.data_dir / "digests").rglob("daily-*.md"))

@@ -11,7 +11,8 @@ from dataclasses import dataclass, field
 
 import requests
 
-from ltinv.actions import proposal
+from ltinv import portfolio
+from ltinv.actions import proposal, reconcile
 from ltinv.config import Settings
 from ltinv.db import repo
 from ltinv.fetch import announcements, bhavcopy
@@ -104,14 +105,20 @@ def run_daily(conn: sqlite3.Connection, s: Settings, http: requests.Session | No
         if token is None:
             return "skipped", "no Kite session today"
         client = kite_mod.KiteClient.from_settings(s, access_token=token)
-        n, gone = repo.replace_holdings(conn, client.holdings(), s.load("sectors"), iso(now_ist()),
-                                        cash_like=s.load("risk").get("cash_like_symbols") or [])
-        return "ok", f"{n} holdings" + (f"; sold out of {', '.join(gone)}" if gone else "")
+        out = reconcile.sync(conn, s, client)
+        detail = f"{out['holdings']} holdings, {out['trades']} trades, cash {out['cash']:,.0f}"
+        if out["events"]:
+            detail += "; " + "; ".join(out["events"])
+        return "ok", detail
 
     def proposals():
-        made = proposal.from_flags(conn)
+        made = proposal.from_flags(conn, s=s)
         gone = proposal.expire(conn)
         return f"{len(made)} new, {len(gone)} expired"
+
+    def risk():
+        r = portfolio.risk_check(conn, s)
+        return "ok", f"cash {r['cash_pct']}%, top5 {r['top5_pct']}%; " + ("; ".join(r["breaches"]) or "no breaches")
 
     def write_digest():
         md, attention = digest.daily(conn, today)
@@ -123,6 +130,7 @@ def run_daily(conn: sqlite3.Connection, s: Settings, http: requests.Session | No
     _step(conn, r, "filings", lambda: collect_filings(conn, s, http))
     _step(conn, r, "scan", lambda: scan(conn, s))
     _step(conn, r, "proposals", proposals)
+    _step(conn, r, "risk", risk)
     _step(conn, r, "digest", write_digest)
     _step(conn, r, "push", lambda: push_data(s))
     return r

@@ -12,7 +12,9 @@ from typing import Optional
 
 import typer
 
-from ltinv import __version__, digest, pipeline
+from ltinv import __version__, digest, pipeline, portfolio
+from ltinv.actions import reconcile
+from ltinv.fetch import tradebook
 from ltinv import thesis as thesis_mod
 from ltinv.actions import flags as flags_mod
 from ltinv.actions import proposal
@@ -34,6 +36,12 @@ proposal_app = typer.Typer(no_args_is_help=True, help="Trade proposals (never or
 digest_app = typer.Typer(no_args_is_help=True, help="Digests of what needs attention.")
 run_app = typer.Typer(no_args_is_help=True, help="Pipelines cron runs.")
 journal_app = typer.Typer(no_args_is_help=True, help="Decision journal.")
+risk_app = typer.Typer(no_args_is_help=True, help="Portfolio risk limits.")
+tax_app = typer.Typer(no_args_is_help=True, help="Capital-gains view of a sale.")
+import_app = typer.Typer(no_args_is_help=True, help="Import broker exports.")
+app.add_typer(risk_app, name="risk")
+app.add_typer(tax_app, name="tax")
+app.add_typer(import_app, name="import")
 app.add_typer(kite_app, name="kite")
 app.add_typer(fetch_app, name="fetch")
 app.add_typer(thesis_app, name="thesis")
@@ -190,17 +198,18 @@ def fetch_holdings() -> None:
             return
         try:
             client = kite_mod.KiteClient.from_settings(s, access_token=token)
-            rows = client.holdings()
+            out = reconcile.sync(conn, s, client)
         except kite_mod.KiteAuthError as exc:
             info.update(status="skipped", detail=str(exc))
             typer.echo(f"skipped: {exc}; run `ltinv kite login`")
             return
         except (ConfigError, kite_mod.KiteError) as exc:
             fail(str(exc))
-        n, gone = repo.replace_holdings(conn, rows, s.load("sectors"), iso(now_ist()),
-                                        cash_like=s.load("risk").get("cash_like_symbols") or [])
-        info["detail"] = f"{n} holdings"
-    typer.echo(f"holdings: {n} written" + (f"; no longer held: {', '.join(gone)}" if gone else ""))
+        info["detail"] = f"{out['holdings']} holdings, {out['trades']} trades"
+    typer.echo(f"holdings: {out['holdings']} written, Kite cash {out['cash']:,.0f}, {out['trades']} trade(s) today"
+               + (f"; no longer held: {', '.join(out['sold_out'])}" if out["sold_out"] else ""))
+    for e in out["events"]:
+        typer.echo(f"  {e}")
 
 
 @fetch_app.command("prices")
@@ -426,7 +435,7 @@ def flags_resolve(
         fail(str(exc))
     typer.echo(f"flag #{flag_id}: {'confirmed' if out['confirmed'] else 'dismissed'} as {out['rule_id']} "
                f"({out['severity']})" + (f", thesis kill criterion {out['kill_criterion']}" if out["kill_criterion"] else ""))
-    for pid in proposal.from_flags(conn):
+    for pid in proposal.from_flags(conn, s=s):
         p = conn.execute("SELECT * FROM proposals WHERE id=?", (pid,)).fetchone()
         typer.echo(f"proposal #{pid}: {p['side']} {p['qty']} {p['symbol']} — {p['reason']} "
                    f"(expires {p['expires_at']})")
@@ -462,8 +471,44 @@ def proposal_show(proposal_id: int) -> None:
     if p is None:
         fail(f"no proposal #{proposal_id}")
     _print_proposal(p)
-    typer.echo("evidence: " + json.dumps(json.loads(p["evidence_json"]), indent=2))
-    typer.echo("tax/risk checks arrive in Phase 2.")
+    for label, col in (("evidence", "evidence_json"), ("tax", "tax_json"), ("risk", "risk_json")):
+        typer.echo(f"{label}: " + json.dumps(json.loads(p[col] or "{}"), indent=2))
+    a = conn.execute("SELECT * FROM approvals WHERE proposal_id=?", (proposal_id,)).fetchone()
+    if a:
+        typer.echo(f"approved {a['approved_at']} via {a['channel']}, valid until {a['valid_until']}"
+                   + (f"; note: {a['note']}" if a["note"] else ""))
+    fills = conn.execute("SELECT * FROM fills WHERE proposal_id=?", (proposal_id,)).fetchall()
+    for f in fills:
+        typer.echo(f"fill: {f['qty']} @ {f['price']} ({f['source']}, {f['filled_at']})")
+
+
+@proposal_app.command("approve")
+def proposal_approve(
+    proposal_id: int,
+    note: Optional[str] = typer.Option(None, "--note", help="Why; required to override a risk-limit breach."),
+) -> None:
+    """Approve a proposal (you then place the order yourself in Kite)."""
+    s = settings()
+    conn = open_db(s)
+    try:
+        out = proposal.approve(conn, proposal_id, s, channel="cli", by=os.environ.get("USER"), note=note)
+    except proposal.ProposalError as exc:
+        fail(str(exc))
+    typer.echo(f"approved #{proposal_id}, valid until {out['valid_until']}")
+    typer.echo(f"place in Kite yourself: {out['order']}")
+    if out["risk"].get("blocking"):
+        typer.echo("override recorded for: " + "; ".join(out["risk"]["blocking"]))
+
+
+@proposal_app.command("reject")
+def proposal_reject(proposal_id: int, note: str = typer.Option(..., "--note", help="Why you reject it.")) -> None:
+    s = settings()
+    conn = open_db(s)
+    try:
+        proposal.reject(conn, proposal_id, note, by=os.environ.get("USER"))
+    except proposal.ProposalError as exc:
+        fail(str(exc))
+    typer.echo(f"rejected #{proposal_id}")
 
 
 @proposal_app.command("create")
@@ -479,7 +524,7 @@ def proposal_create(
         fail(f"evidence {evidence} not found")
     try:
         pid, created = proposal.create(conn, thesis_mod.normalise_symbol(symbol), side, qty, reason,
-                                       {"path": evidence})
+                                       {"path": evidence}, s=s)
     except (proposal.ProposalError, thesis_mod.ThesisError) as exc:
         fail(str(exc))
     typer.echo(f"proposal #{pid} {'created' if created else 'already open'}")
@@ -489,6 +534,72 @@ def proposal_create(
 def proposal_expire() -> None:
     conn = open_db(settings())
     typer.echo(f"expired: {proposal.expire(conn) or 'none'}")
+
+
+# --- risk / tax / import ------------------------------------------------------------------
+
+
+@risk_app.command("check")
+def risk_check() -> None:
+    """Weights vs limits (stocks only, % of the whole portfolio incl. cash). Exit 1 on breach."""
+    s = settings()
+    conn = open_db(s)
+    try:
+        r = portfolio.risk_check(conn, s)
+    except (ValueError, ConfigError) as exc:
+        fail(str(exc))
+    typer.echo(f"portfolio {r['total']:,.0f}  cash {r['cash']:,.0f} ({r['cash_pct']}%)  top-5 stocks {r['top5_pct']}%")
+    for sym, w in sorted(r["stock_weights"].items(), key=lambda kv: -kv[1]):
+        typer.echo(f"  {sym:<14} {w:5.2f}%")
+    for sec, w in sorted(r["sector_weights"].items(), key=lambda kv: -kv[1]):
+        typer.echo(f"  sector {sec:<22} {w:5.2f}%")
+    if r["unpriced"]:
+        typer.echo(f"no price (valued at cost): {', '.join(r['unpriced'])}")
+    if not r["kite_cash_as_of"]:
+        typer.echo("Kite cash unknown (counted as 0): log in to Kite and run `ltinv fetch holdings`")
+    for b in r["breaches"]:
+        typer.secho(f"BREACH {b}", fg=typer.colors.RED)
+    if r["breaches"]:
+        raise typer.Exit(1)
+
+
+@risk_app.command("simulate")
+def risk_simulate(symbol: str = typer.Option(...), side: str = typer.Option(...),
+                  qty: int = typer.Option(...), price: Optional[float] = typer.Option(None)) -> None:
+    """What a trade would do to the limits, without recording anything."""
+    s = settings()
+    conn = open_db(s)
+    out = portfolio.risk_for_trade(conn, s, thesis_mod.normalise_symbol(symbol), side.upper(), qty, price)
+    typer.echo(json.dumps(out, indent=2))
+
+
+@tax_app.command("show")
+def tax_show(symbol: str, qty: Optional[int] = typer.Option(None, help="Shares to sell (default: all)"),
+             price: Optional[float] = typer.Option(None, help="Sale price (default: last close)")) -> None:
+    """Tax view of selling a holding now: lots, STCG/LTCG, exemption left, wait hints."""
+    s = settings()
+    conn = open_db(s)
+    sym = thesis_mod.normalise_symbol(symbol)
+    h = conn.execute("SELECT qty FROM holdings WHERE symbol=?", (sym,)).fetchone()
+    if h is None:
+        fail(f"{sym} is not held")
+    typer.echo(json.dumps(portfolio.tax_for_sale(conn, s, sym, qty or h["qty"], price), indent=2))
+
+
+@import_app.command("tradebook")
+def import_tradebook(path: str = typer.Argument(..., help="Console tradebook CSV, or - for stdin")) -> None:
+    """Import a Zerodha Console tradebook (Reports > Tradebook > Equity) for tax lots."""
+    import sys
+    s = settings()
+    conn = open_db(s)
+    try:
+        text = sys.stdin.read() if path == "-" else Path(path).read_text(encoding="utf-8-sig")
+        rows = tradebook.parse(text)
+    except (OSError, tradebook.TradebookError) as exc:
+        fail(str(exc))
+    n = tradebook.store(conn, rows, source="tradebook")
+    span = f"{min(r['trade_date'] for r in rows)} to {max(r['trade_date'] for r in rows)}" if rows else "no rows"
+    typer.echo(f"tradebook: {len(rows)} equity trades read ({span}), {n} new")
 
 
 # --- digest / run / journal -----------------------------------------------------------------
@@ -516,6 +627,26 @@ def run_daily() -> None:
         typer.echo(f"{st.step:<10} {st.status:<8} {st.detail or ''}")
     if report.failed:
         raise typer.Exit(1)
+
+
+@app.command()
+def dashboard(port: int = typer.Option(8501), address: str = typer.Option("127.0.0.1")) -> None:
+    """Serve the Streamlit dashboard (needs the `dashboard` extra). Loopback only by default:
+    put Cloudflare Tunnel + Access in front of it."""
+    try:
+        import streamlit  # noqa: F401
+    except ImportError:
+        fail('install the dashboard extra: pip install -e ".[dashboard]"')
+    import sys
+    from importlib import resources
+    s = settings()
+    open_db(s)
+    os.environ["LTINV_HOME"] = str(s.home)
+    app_path = str(resources.files("ltinv") / "dashboard" / "app.py")
+    os.execv(sys.executable, [sys.executable, "-m", "streamlit", "run", app_path,
+                              "--server.address", address, "--server.port", str(port),
+                              "--server.headless", "true", "--browser.gatherUsageStats", "false",
+                              "--server.enableXsrfProtection", "true"])
 
 
 @journal_app.command("add")

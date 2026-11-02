@@ -1,0 +1,25 @@
+# systemd unit for the ltinv dashboard. Loopback only: Cloudflare Tunnel + Access in front.
+# Install (as a sudoer on the host, after reviewing):
+#   sudo cp ~/ltinv/deploy/ltinv-dashboard.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now ltinv-dashboard
+#   systemctl status ltinv-dashboard ; ss -ltnp | grep 8501   # 127.0.0.1:8501 only
+[Unit]
+Description=ltinv dashboard (Streamlit, 127.0.0.1:8501)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=trader
+Environment=LTINV_HOME=/home/trader/ltinv-home
+Environment=STREAMLIT_BROWSER_GATHER_USAGE_STATS=false
+ExecStart=/home/trader/ltinv/.venv/bin/ltinv dashboard --address 127.0.0.1 --port 8501
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ReadWritePaths=/home/trader/ltinv-home /home/trader/.streamlit
+MemoryMax=400M
+
+[Install]
+WantedBy=multi-user.target
