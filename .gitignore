@@ -15,3 +15,6 @@ dist/
 !.env.example
 /config/
 /data/
+.coverage
+.coverage.*
+htmlcov/
