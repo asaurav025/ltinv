@@ -227,8 +227,20 @@ def test_reclassify_to_kill_criterion_makes_full_sell_proposal(conn, flagged):
         ("SELL", 10, "kill-criterion:auditor_quits", 194.0, 206.0)
     assert json.loads(p["evidence_json"])["rule"] == "auditor_resignation"
     assert proposal.from_flags(conn) == []  # deduped
-    with pytest.raises(flags_mod.ResolveError, match="already resolved"):
+    with pytest.raises(flags_mod.ResolveError, match=r"already resolved \(confirmed\)"):
         flags_mod.resolve(conn, flagged, RULES, confirmed=False, rationale="again")
+
+
+def test_describe_and_pending(conn, flagged):
+    d = flags_mod.describe(conn, flagged, RULES)
+    assert d["filing"]["url"].endswith("x.pdf")
+    assert [o["rule_id"] for o in d["options"]][:2] == ["governance_change", "auditor_resignation"]
+    assert d["thesis_kill_criteria"] == {"auditor_resignation": "auditor_quits"}
+    assert [r["id"] for r in flags_mod.pending(conn)] == [flagged]
+    flags_mod.resolve(conn, flagged, RULES, confirmed=False, rationale="routine appointment")
+    assert flags_mod.pending(conn) == []
+    with pytest.raises(flags_mod.ResolveError, match="no flag"):
+        flags_mod.describe(conn, 999, RULES)
 
 
 def test_lowered_severity_and_dismissal_make_no_proposal(conn, flagged):

@@ -53,7 +53,8 @@ def resolve(conn: sqlite3.Connection, flag_id: int, rules: dict[str, Rule], *, c
     if flag is None:
         raise ResolveError(f"no flag #{flag_id}")
     if flag["llm_confirmed"] is not None or flag["status"] != "open":
-        raise ResolveError(f"flag #{flag_id} is already resolved ({flag['status']})")
+        state = {1: "confirmed", 0: "dismissed"}.get(flag["llm_confirmed"], flag["status"])
+        raise ResolveError(f"flag #{flag_id} is already resolved ({state})")
     allowed = {r.id: r for r in options(flag, rules)}
     rid = rule_id or flag["rule_id"]
     if rid not in allowed:

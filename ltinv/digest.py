@@ -53,7 +53,7 @@ def daily(conn: sqlite3.Connection, day: date) -> tuple[str, bool]:
         out.append(f"- **{ICON[f['severity']]}** {f['symbol']} `{f['rule_id']}` (#{f['id']}){kill}: "
                    f"{_flag_state(f)}. {what[:200]}{link}")
         if f["llm_rationale"]:
-            out.append(f"  - LLM: {f['llm_rationale']}")
+            out.append(f"  - Verdict: {f['llm_rationale']}")
     out.append("")
     out.append(f"## Open proposals ({len(props)})")
     if not props:
