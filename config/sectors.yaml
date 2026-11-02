@@ -1,0 +1,6 @@
+# Symbol -> sector, hand-maintained (Kite holdings carry no sector).
+# `ltinv status` lists holdings that have no sector yet.
+RELIANCE: Energy
+INFY: IT Services
+TCS: IT Services
+HDFCBANK: Banks

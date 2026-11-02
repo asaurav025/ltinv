@@ -1,0 +1,8 @@
+# Valuation settings (Phase 3). Peer sets are hand-curated (open question #1).
+history_years: 5
+dcf:
+  stages_years: [5, 5]
+  terminal_growth_pct: 5
+  discount_rate_pct: 12
+peers: {}
+#  RELIANCE: [ONGC, IOC, BPCL]

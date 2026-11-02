@@ -1,0 +1,10 @@
+# Portfolio risk limits (Architecture §7.2). Weights are % of portfolio value incl. cash.
+single_stock_max_pct: 12
+sector_max_pct: 30
+top5_max_pct: 55
+min_cash_pct: 5
+max_new_position_pct: 5
+
+# true: `proposal approve` is refused on a breach unless the approval carries an
+# override note, which is journaled.
+block_on_breach: true

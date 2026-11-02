@@ -1,0 +1,31 @@
+# Red-flag taxonomy (Architecture §7.1). Phase 0 uses only the rule ids, so thesis kill
+# criteria can reference them; the matching engine arrives in Phase 1.
+# detect: subject = matched on announcement category/subject in code
+#         llm     = fires as a candidate in code, settled by `flags confirm`
+#         data    = computed from shareholding/financials/prices rows
+
+severities:
+  fatal: {action: "proposal SELL full"}
+  serious: {action: "proposal SELL trim + schedule review"}
+  watch: {action: "journal + health card"}
+
+rules:
+  - {id: auditor_resignation, severity: fatal, detect: subject, text: "Statutory auditor resigns mid-term"}
+  - {id: forensic_audit, severity: fatal, detect: subject, text: "Forensic audit ordered"}
+  - {id: regulator_order_promoter, severity: fatal, detect: llm, text: "SEBI/ED order naming promoters"}
+  - {id: debt_default, severity: fatal, detect: subject, text: "Debt default or rating to D"}
+  - {id: pledge_invocation, severity: fatal, detect: subject, text: "Pledged shares invoked"}
+  - {id: promoter_stake_drop, severity: fatal, detect: llm, text: "Promoter stake down >= 5 pts in a quarter without disclosed reason"}
+  - {id: restatement, severity: fatal, detect: subject, text: "Restatement of accounts"}
+
+  - {id: kmp_exit_no_successor, severity: serious, detect: llm, text: "CFO/MD exit without named successor"}
+  - {id: independent_director_governance_exit, severity: serious, detect: llm, text: "Independent director exit citing governance"}
+  - {id: pledge_high, severity: serious, detect: data, text: "Promoter pledge > 25% or +10 pts QoQ"}
+  - {id: rpt_not_arms_length, severity: serious, detect: llm, text: "Related-party transaction flagged not at arm's length"}
+  - {id: ocf_pat_low, severity: serious, detect: data, text: "OCF/PAT < 0.5 for two consecutive FYs"}
+  - {id: rating_downgrade_2, severity: serious, detect: subject, text: "Credit rating cut by 2+ notches"}
+
+  - {id: promoter_pay_jump, severity: watch, detect: data, text: "Promoter remuneration > +30% YoY"}
+  - {id: acquisition_outside_core, severity: watch, detect: llm, text: "Acquisition outside the core business"}
+  - {id: guidance_cut, severity: watch, detect: llm, text: "Guidance cut"}
+  - {id: price_volume_drop, severity: watch, detect: data, text: "Price -10% on >= 3x 20-day avg volume (read only, never a sell)"}

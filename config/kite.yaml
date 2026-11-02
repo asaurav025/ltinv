@@ -1,0 +1,7 @@
+# Kite Connect settings. Secrets live in .env, never here.
+base_url: https://api.kite.trade
+login_url: https://kite.zerodha.com/connect/login
+timeout_s: 20
+
+# Kill switch for Phase 6 automated execution. v1 never places orders.
+execution_enabled: false

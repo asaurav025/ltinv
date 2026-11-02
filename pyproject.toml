@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ltinv"
+version = "0.1.0"
+description = "Long-term investor suite for NSE/BSE holdings on Zerodha: theses, red flags, reviews, approvals."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+dependencies = [
+  "typer>=0.12",
+  "pyyaml>=6",
+  "requests>=2.31",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[project.scripts]
+ltinv = "ltinv.cli:app"
+
+[tool.setuptools.packages.find]
+include = ["ltinv*"]
+
+[tool.setuptools.package-data]
+ltinv = ["db/*.sql", "db/migrations/*.sql", "templates/*.md"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

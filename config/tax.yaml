@@ -1,0 +1,6 @@
+# Listed equity, STT paid. FY 2026-27 rates (unchanged by Budget 2026). Phase 2 uses these.
+ltcg_holding_days: 365
+stcg_rate_pct: 20
+ltcg_rate_pct: 12.5
+ltcg_exemption_per_fy_inr: 125000
+wait_hint_max_days: 45
