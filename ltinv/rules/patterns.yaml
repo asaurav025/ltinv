@@ -1,0 +1,57 @@
+# How each red-flag rule is detected in a filing. Ships with the code (not user config) so
+# detection improves on upgrade; config/red-flags.yaml decides which rules exist and their
+# severity. Regexes are case-insensitive and run on "<NSE category> | <subject>", with NSE's
+# catch-all "Directors/KMP/SMP/Auditor/RTA" wording removed first (it names every role, so it
+# says nothing about which one changed).
+#   all:  every regex must match      any: at least one must match
+#   none: no regex may match          categories: NSE categories that raise the rule as a
+#                                     "needs a read" candidate when no specific rule matched
+#   reclassify_to: rules `flags confirm` may turn this candidate into (capped at their severity)
+
+auditor_resignation:
+  all: ['\bauditors?\b']
+  any: ['resign', 'cessation', 'vacat', 'withdr']
+  none: ['internal auditor', 'secretarial auditor', 'cost auditor']
+forensic_audit:
+  any: ['forensic']
+regulator_order_promoter:
+  all: ['\b(sebi|enforcement directorate|sfio|cbi)\b|securities and exchange board']
+  any: ['order', 'search', 'raid', 'show cause', 'summons', 'penalt', 'debar']
+debt_default:
+  any: ['\bdefault(ed)?\b', 'non[- ]?payment', 'delay in (payment|servicing)']
+  none: ['\bno default', 'not in default', 'without default']
+pledge_invocation:
+  all: ['pledge|encumb']
+  any: ['invo(ked|cation)']
+promoter_stake_drop:
+  all: ['promoter']
+  any: ['\bsale\b', 'dispos', '\bsold\b', 'offer for sale', '\bofs\b', 'regulation 29', 'reg\.? ?29']
+restatement:
+  any: ['restat(e|ed|ement)\b[^|]*(accounts|financial)']
+kmp_exit_no_successor:
+  all: ['resign|cessation|step(ped|s)? down']
+  any: ['chief financial', '\bcfo\b', 'managing director', '\bmd\b', 'chief executive', '\bceo\b', 'whole[- ]time director']
+independent_director_governance_exit:
+  all: ['independent director']
+  any: ['resign', 'cessation']
+rpt_not_arms_length:
+  all: ['related[- ]party']
+  any: ["arm'?s?[- ]length", 'ordinary course', 'qualif', 'irregular']
+rating_downgrade_2:
+  all: ['\brating']
+  any: ['downgrad', 'revis(ed|ion)', 'watch (with )?negative', 'negative implication']
+acquisition_outside_core:
+  any: ['\bacqui(re|sition)']
+  none: ['acquisition of shares by promoter', 'substantial acquisition']
+
+# A rule defined only here (not in config/red-flags.yaml) still runs, with these defaults;
+# set `enabled: false` for it in config to turn it off.
+governance_change:
+  default: {severity: watch, detect: llm, text: "Board/KMP/auditor change filed without detail; read it to classify"}
+  categories:
+    - Change in Directors/KMP/SMP/Auditor/RTA
+    - Resignation of Director/KMP/SMP
+    - Change in Management
+    - Resignation
+    - Cessation
+  reclassify_to: [auditor_resignation, kmp_exit_no_successor, independent_director_governance_exit]

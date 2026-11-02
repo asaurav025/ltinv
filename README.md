@@ -7,9 +7,11 @@ Zerodha. It keeps a written thesis per holding with pre-committed, machine-check
 rules, watches exchange filings for governance red flags, and (in later phases) reviews
 quarterly results against the thesis and turns conclusions into proposals you approve.
 
-Rules, valuation, tax and risk checks are plain code with tests; an LLM is used at exactly
-three call sites, with schema-validated output. In v1 the suite approves decisions and
-**you place trades yourself in Kite**: it never places orders.
+Rules, valuation, tax and risk checks are plain code with tests, running on an always-on host
+with **no LLM and no AI credentials**. Judgement (is this filing really a red flag?) happens
+in [Claude Code](https://claude.com/claude-code) on your own machine, through the skills in
+`.claude/skills/`, which record verdicts via the CLI; the CLI enforces the guardrails. In v1
+the suite approves decisions and **you place trades yourself in Kite**: it never places orders.
 
 > **Not investment advice.** This is a personal project, shared as-is under the MIT
 > license. It makes no recommendations to anyone, and nothing in it is a solicitation to
@@ -26,7 +28,7 @@ three call sites, with schema-validated output. In v1 the suite approves decisio
 | Phase | Outcome | Status |
 | --- | --- | --- |
 | 0 | Repo, config, DB, Kite login + holdings, bhavcopy prices, first thesis | **done** |
-| 1 | Filings feed, daily red-flag loop, proposals | next |
+| 1 | Filings feeds, red-flag rules, Claude Code judging, proposals, digest, cron | **in progress** |
 | 2 | Risk check, approvals, reconcile, Streamlit dashboard | |
 | 3 | Monthly loop: shareholding, XBRL financials, metrics, valuation, health card | |
 | 4 | Quarterly loop: concall, LLM review, journal scoring | |
@@ -42,6 +44,21 @@ three call sites, with schema-validated output. In v1 the suite approves decisio
 | `ltinv fetch holdings` | Snapshots Kite holdings. Skipped (exit 0) without today's session. |
 | `ltinv fetch prices [SYM...] --range 1y` | Daily closes from NSE bhavcopy, cached locally. |
 | `ltinv thesis new\|show\|edit\|validate SYM` | Thesis in `data/thesis/SYM.md`; `validate` stores it only if every kill criterion is machine-checkable. |
+| `ltinv fetch filings` | Today's NSE/BSE announcements for your stocks (public RSS feeds), then the red-flag rules. Hourly in cron. |
+| `ltinv flags list\|show\|resolve` | Red flags; `resolve` records a verdict (quote required to confirm, severity can only go down). |
+| `ltinv proposal list\|show\|create\|expire` | SELL proposals from confirmed fatal/serious flags or thesis kill criteria. Never orders. |
+| `ltinv run daily` / `digest daily` | The evening pipeline and its markdown digest. Schedule: `cron/ltinv.cron`. |
+
+### Red flags, end to end
+
+1. Hourly, `fetch filings` stores today's filings for your stocks: NSE's feed (matched by company
+   name via NSE's equity list) and, for BSE-only listings, BSE's feed (matched by scrip code).
+2. Rules in `ltinv/rules/patterns.yaml` match the filing's category and subject. Clear wording
+   ("statutory auditor resigned") raises that rule; NSE's catch-all governance categories raise a
+   `governance_change` candidate that needs a read. Severities come from your `config/red-flags.yaml`.
+3. In Claude Code, the `red-flag-scan` skill downloads each unjudged filing, reads it, and runs
+   `ltinv flags resolve` over SSH. Confirmed fatal/serious flags, or any hit on a thesis kill
+   criterion, become SELL proposals for you to review.
 
 ## Setup
 

@@ -25,7 +25,7 @@ ltinv = "ltinv.cli:app"
 include = ["ltinv*"]
 
 [tool.setuptools.package-data]
-ltinv = ["db/*.sql", "db/migrations/*.sql", "templates/*.md", "config_examples/*.yaml"]
+ltinv = ["db/*.sql", "db/migrations/*.sql", "templates/*.md", "config_examples/*.yaml", "rules/*.yaml"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -1,0 +1,18 @@
+# ltinv schedule for the always-on host. Times are the host's local time, which must be
+# Asia/Kolkata (check: timedatectl). Deterministic jobs only; no LLM runs here.
+#
+# Install (review first):  mkdir -p ~/ltinv-home/logs && (crontab -l 2>/dev/null; cat ~/ltinv/cron/ltinv.cron) | crontab -
+# Paths assume the code in ~/ltinv and personal state in ~/ltinv-home.
+
+SHELL=/bin/bash
+LTINV_HOME=/home/trader/ltinv-home
+LTINV=/home/trader/ltinv/.venv/bin/ltinv
+
+# Hourly 07:07-23:07, plus 23:57: today's NSE/BSE filings for your stocks, then the red-flag
+# rules. The exchange feeds hold only the current day, so a missed day is lost.
+7 7-23 * * *  flock -n $LTINV_HOME/.lock $LTINV fetch filings -q >> $LTINV_HOME/logs/cron.log 2>&1
+57 23 * * *   flock -w 300 $LTINV_HOME/.lock $LTINV fetch filings -q >> $LTINV_HOME/logs/cron.log 2>&1
+
+# 21:45 daily: holdings (if logged in to Kite today), prices, filings, scan, proposals from
+# judged flags, digest, push data/ to its private repo.
+45 21 * * *   flock -w 900 $LTINV_HOME/.lock $LTINV run daily >> $LTINV_HOME/logs/cron.log 2>&1

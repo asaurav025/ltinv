@@ -2,16 +2,21 @@
 
 from __future__ import annotations
 
+import json
 import os
 import shlex
 import subprocess
+from datetime import date
 from pathlib import Path
 from typing import Optional
 
 import typer
 
-from ltinv import __version__
+from ltinv import __version__, digest, pipeline
 from ltinv import thesis as thesis_mod
+from ltinv.actions import flags as flags_mod
+from ltinv.actions import proposal
+from ltinv.rules import redflags
 from ltinv.config import CONFIG_FILES, ConfigError, Settings, get_settings, write_missing_config
 from ltinv.db import repo
 from ltinv.fetch import bhavcopy
@@ -24,9 +29,19 @@ app = typer.Typer(no_args_is_help=True, add_completion=False,
 kite_app = typer.Typer(no_args_is_help=True, help="Kite session (one manual login per trading day).")
 fetch_app = typer.Typer(no_args_is_help=True, help="Pull data into the DB.")
 thesis_app = typer.Typer(no_args_is_help=True, help="Written investment theses.")
+flags_app = typer.Typer(no_args_is_help=True, help="Red flags: scan filings, list, judge.")
+proposal_app = typer.Typer(no_args_is_help=True, help="Trade proposals (never orders).")
+digest_app = typer.Typer(no_args_is_help=True, help="Digests of what needs attention.")
+run_app = typer.Typer(no_args_is_help=True, help="Pipelines cron runs.")
+journal_app = typer.Typer(no_args_is_help=True, help="Decision journal.")
 app.add_typer(kite_app, name="kite")
 app.add_typer(fetch_app, name="fetch")
 app.add_typer(thesis_app, name="thesis")
+app.add_typer(flags_app, name="flags")
+app.add_typer(proposal_app, name="proposal")
+app.add_typer(digest_app, name="digest")
+app.add_typer(run_app, name="run")
+app.add_typer(journal_app, name="journal")
 
 DATA_GITIGNORE = "ltinv.db\nltinv.db-*\ncache/\n"
 
@@ -301,6 +316,216 @@ def thesis_validate(symbol: str) -> None:
     except thesis_mod.ThesisError as exc:
         fail(str(exc))
     _report_and_store(s, v)
+
+
+# --- filings & flags ----------------------------------------------------------------------
+
+
+@fetch_app.command("filings")
+def fetch_filings(quiet: bool = typer.Option(False, "--quiet", "-q")) -> None:
+    """Store today's NSE/BSE announcements for your stocks, then run the red-flag rules.
+    The feeds hold only today, so cron runs this hourly."""
+    s = settings()
+    conn = open_db(s)
+    try:
+        with repo.run_step(conn, "fetch", "filings") as info:
+            _, info["detail"] = pipeline.collect_filings(conn, s)
+        scanned = pipeline.scan(conn, s)
+    except Exception as exc:
+        fail(f"{type(exc).__name__}: {exc}")
+    if not quiet:
+        typer.echo(f"filings: {info['detail']}\nscan: {scanned}")
+
+
+def _rules(s: Settings):
+    try:
+        return redflags.load_rules(s.load("red-flags"))
+    except (ConfigError, ValueError) as exc:
+        fail(str(exc))
+
+
+@flags_app.command("scan")
+def flags_scan() -> None:
+    """Run the red-flag rules over filings not yet scanned, and over the latest prices."""
+    s = settings()
+    conn = open_db(s)
+    typer.echo(pipeline.scan(conn, s))
+
+
+@flags_app.command("list")
+def flags_list(
+    status: Optional[str] = typer.Option("open", help="open | dismissed | all"),
+    pending: bool = typer.Option(False, "--pending", help="Only flags nobody has judged yet."),
+    as_json: bool = typer.Option(False, "--json"),
+) -> None:
+    """List red flags, most severe first."""
+    conn = open_db(settings())
+    if pending:
+        rows = flags_mod.pending(conn)
+    else:
+        where = "" if status == "all" else "WHERE f.status=?"
+        rows = conn.execute(
+            f"""SELECT f.*, fl.company, fl.subject AS filing_subject, fl.url FROM flags f
+                LEFT JOIN filings fl ON fl.id=f.filing_id {where}
+                ORDER BY CASE f.severity WHEN 'fatal' THEN 0 WHEN 'serious' THEN 1 ELSE 2 END, f.id""",
+            () if status == "all" else (status,)).fetchall()
+    if as_json:
+        typer.echo(json.dumps([dict(r) for r in rows], indent=2))
+        return
+    if not rows:
+        typer.echo("no flags")
+    for r in rows:
+        state = {1: "confirmed", 0: "dismissed"}.get(r["llm_confirmed"], "not judged")
+        kill = f" KILL:{r['kill_criterion']}" if r["kill_criterion"] else ""
+        typer.echo(f"#{r['id']:<4} {r['severity']:<7} {r['symbol']:<12} {r['rule_id']:<36} {state}{kill}"
+                   f"  {(r['filing_subject'] or r['detail'] or '')[:80]}")
+
+
+@flags_app.command("show")
+def flags_show(flag_id: int, as_json: bool = typer.Option(False, "--json")) -> None:
+    """A flag, its filing (with document link), and the rules it may be resolved as."""
+    s = settings()
+    conn = open_db(s)
+    try:
+        d = flags_mod.describe(conn, flag_id, _rules(s))
+    except flags_mod.ResolveError as exc:
+        fail(str(exc))
+    if as_json:
+        typer.echo(json.dumps(d, indent=2))
+        return
+    f, fl = d["flag"], d["filing"]
+    typer.echo(f"flag #{f['id']} {f['severity']} {f['symbol']} {f['rule_id']} ({f['status']})")
+    typer.echo(f"matched: {f['detail']}")
+    if fl:
+        typer.echo(f"filing:  {fl['company']} on {fl['exchange']} at {fl['filed_at']}")
+        typer.echo(f"         {fl['category'] or ''} {fl['subject']}")
+        typer.echo(f"doc:     {fl['url'] or '(no document)'}")
+    typer.echo("may be resolved as: " + ", ".join(f"{o['rule_id']} (≤{o['severity_ceiling']})" for o in d["options"]))
+    if f["llm_rationale"]:
+        typer.echo(f"verdict: {f['llm_rationale']}")
+
+
+@flags_app.command("resolve")
+def flags_resolve(
+    flag_id: int,
+    confirm: bool = typer.Option(..., "--confirm/--dismiss", help="Is the red flag real?"),
+    rationale: str = typer.Option(..., "--rationale", help="What happened, and why it is or is not the flag."),
+    quote: str = typer.Option("", "--quote", help="Sentence copied exactly from the filing (required to confirm)."),
+    rule: Optional[str] = typer.Option(None, "--rule", help="Reclassify to one of the allowed rules."),
+    severity: Optional[str] = typer.Option(None, "--severity", help="Keep or lower the rule's severity."),
+    by: str = typer.Option("manual", "--by", help="Who judged: manual | claude-code."),
+) -> None:
+    """Record a verdict on a flag. Confirmed fatal/serious flags and thesis kill criteria
+    become SELL proposals right away."""
+    s = settings()
+    conn = open_db(s)
+    try:
+        out = flags_mod.resolve(conn, flag_id, _rules(s), confirmed=confirm, rationale=rationale,
+                                quote=quote, rule_id=rule, severity=severity, by=by)
+    except flags_mod.ResolveError as exc:
+        fail(str(exc))
+    typer.echo(f"flag #{flag_id}: {'confirmed' if out['confirmed'] else 'dismissed'} as {out['rule_id']} "
+               f"({out['severity']})" + (f", thesis kill criterion {out['kill_criterion']}" if out["kill_criterion"] else ""))
+    for pid in proposal.from_flags(conn):
+        p = conn.execute("SELECT * FROM proposals WHERE id=?", (pid,)).fetchone()
+        typer.echo(f"proposal #{pid}: {p['side']} {p['qty']} {p['symbol']} — {p['reason']} "
+                   f"(expires {p['expires_at']})")
+
+
+# --- proposals ----------------------------------------------------------------------------
+
+
+def _print_proposal(p) -> None:
+    band = f" limit {p['limit_low']}–{p['limit_high']}" if p["limit_low"] else ""
+    typer.echo(f"#{p['id']:<4} {p['status']:<9} {p['side']} {p['qty']} {p['symbol']}{band} — {p['reason']}"
+               f" (expires {p['expires_at']})")
+
+
+@proposal_app.command("list")
+def proposal_list(status: str = typer.Option("open", help="open | expired | all ..."),
+                  as_json: bool = typer.Option(False, "--json")) -> None:
+    conn = open_db(settings())
+    rows = proposal.listing(conn, None if status == "all" else status)
+    if as_json:
+        typer.echo(json.dumps([dict(r) for r in rows], indent=2))
+        return
+    if not rows:
+        typer.echo("no proposals")
+    for p in rows:
+        _print_proposal(p)
+
+
+@proposal_app.command("show")
+def proposal_show(proposal_id: int) -> None:
+    conn = open_db(settings())
+    p = conn.execute("SELECT * FROM proposals WHERE id=?", (proposal_id,)).fetchone()
+    if p is None:
+        fail(f"no proposal #{proposal_id}")
+    _print_proposal(p)
+    typer.echo("evidence: " + json.dumps(json.loads(p["evidence_json"]), indent=2))
+    typer.echo("tax/risk checks arrive in Phase 2.")
+
+
+@proposal_app.command("create")
+def proposal_create(
+    symbol: str = typer.Option(...), side: str = typer.Option(...), qty: int = typer.Option(...),
+    reason: str = typer.Option(...),
+    evidence: str = typer.Option(..., help="Path to a review/flag/file under data/ backing this."),
+) -> None:
+    """A manual proposal. Needs evidence: proposals never come from chat reasoning alone."""
+    s = settings()
+    conn = open_db(s)
+    if not (s.data_dir / evidence).exists() and not Path(evidence).exists():
+        fail(f"evidence {evidence} not found")
+    try:
+        pid, created = proposal.create(conn, thesis_mod.normalise_symbol(symbol), side, qty, reason,
+                                       {"path": evidence})
+    except (proposal.ProposalError, thesis_mod.ThesisError) as exc:
+        fail(str(exc))
+    typer.echo(f"proposal #{pid} {'created' if created else 'already open'}")
+
+
+@proposal_app.command("expire")
+def proposal_expire() -> None:
+    conn = open_db(settings())
+    typer.echo(f"expired: {proposal.expire(conn) or 'none'}")
+
+
+# --- digest / run / journal -----------------------------------------------------------------
+
+
+@digest_app.command("daily")
+def digest_daily(day: Optional[str] = typer.Option(None, "--date", help="YYYY-MM-DD (default today)"),
+                 write: bool = typer.Option(True, help="Also save it under data/digests/.")) -> None:
+    s = settings()
+    conn = open_db(s)
+    d = date.fromisoformat(day) if day else today_ist()
+    md, _ = digest.daily(conn, d)
+    if write:
+        digest.write(s.data_dir, d, md)
+    typer.echo(md)
+
+
+@run_app.command("daily")
+def run_daily() -> None:
+    """Holdings (if logged in), prices, filings, red-flag scan, proposals, digest, data push."""
+    s = settings()
+    conn = open_db(s)
+    report = pipeline.run_daily(conn, s)
+    for st in report.steps:
+        typer.echo(f"{st.step:<10} {st.status:<8} {st.detail or ''}")
+    if report.failed:
+        raise typer.Exit(1)
+
+
+@journal_app.command("add")
+def journal_add(note: str, kind: str = typer.Option("note", help="note | dissent"),
+                symbol: Optional[str] = typer.Option(None)) -> None:
+    if kind not in ("note", "dissent"):
+        fail("kind must be note or dissent")
+    conn = open_db(settings())
+    repo.add_journal(conn, kind, note, symbol=thesis_mod.normalise_symbol(symbol) if symbol else None)
+    typer.echo("journaled")
 
 
 if __name__ == "__main__":
