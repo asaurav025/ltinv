@@ -5,6 +5,11 @@ top5_max_pct: 55
 min_cash_pct: 5
 max_new_position_pct: 5
 
+# Holdings that count as cash (e.g. liquid / overnight ETFs) toward min_cash_pct. They
+# need no thesis or sector. ETFs (INF ISINs) and government securities incl. SGBs (IN00)
+# are recognised from the ISIN; only cash-like ones need listing here.
+cash_like_symbols: []
+
 # true: `proposal approve` is refused on a breach unless the approval carries an
 # override note, which is journaled.
 block_on_breach: true

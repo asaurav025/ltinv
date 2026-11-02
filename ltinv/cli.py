@@ -16,6 +16,7 @@ from ltinv.config import CONFIG_FILES, ConfigError, Settings, get_settings, writ
 from ltinv.db import repo
 from ltinv.fetch import bhavcopy
 from ltinv.fetch import kite as kite_mod
+from ltinv.instruments import ORDER, needs_thesis
 from ltinv.timeutil import iso, now_ist, today_ist
 
 app = typer.Typer(no_args_is_help=True, add_completion=False,
@@ -102,17 +103,26 @@ def status() -> None:
     conn = open_db(s)
     hold = repo.holdings(conn)
     sectors = s.load("sectors")
-    no_sector = [h["symbol"] for h in hold if not sectors.get(h["symbol"])]
+    equities = [h["symbol"] for h in hold if needs_thesis(h["asset_class"])]
+    no_sector = [sym for sym in equities if not sectors.get(sym)]
     last_price = conn.execute("SELECT MAX(date) FROM prices").fetchone()[0]
+    no_price = [r[0] for r in conn.execute(
+        "SELECT symbol FROM holdings WHERE symbol NOT IN (SELECT DISTINCT symbol FROM prices)")]
     theses = {r["symbol"] for r in conn.execute("SELECT symbol FROM theses")}
-    held = {h["symbol"] for h in hold}
     open_props = conn.execute("SELECT COUNT(*) FROM proposals WHERE status='open'").fetchone()[0]
+    by_class: dict[str, int] = {}
+    for h in hold:
+        by_class[h["asset_class"] or "unclassified"] = by_class.get(h["asset_class"] or "unclassified", 0) + 1
+    breakdown = ", ".join(f"{by_class[c]} {c}" for c in (*ORDER, "unclassified") if c in by_class)
     typer.echo(f"database   {s.db_path} (schema v{repo.schema_version(conn)})")
     typer.echo(f"kite       {kite_mod.session_status(conn)}")
-    typer.echo(f"holdings   {len(hold)}" + (f" (as of {hold[0]['as_of']})" if hold else ""))
-    typer.echo(f"prices     last close {last_price or 'none'}")
-    typer.echo(f"theses     {len(theses)} validated; held without one: "
-               f"{', '.join(sorted(held - theses)) or 'none'}")
+    typer.echo(f"holdings   {len(hold)}" + (f" ({breakdown}; as of {hold[0]['as_of']})" if hold else ""))
+    if "unclassified" in by_class:
+        typer.echo("           run `ltinv fetch holdings` to classify them")
+    typer.echo(f"prices     last close {last_price or 'none'}"
+               + (f"; none for: {', '.join(no_price)}" if no_price else ""))
+    typer.echo(f"theses     {len(theses)} validated; equities without one: "
+               f"{', '.join(sorted(set(equities) - theses)) or 'none'}")
     if no_sector:
         typer.echo(f"sectors    missing in config/sectors.yaml: {', '.join(no_sector)}")
     typer.echo(f"proposals  {open_props} open")
@@ -172,7 +182,8 @@ def fetch_holdings() -> None:
             return
         except (ConfigError, kite_mod.KiteError) as exc:
             fail(str(exc))
-        n, gone = repo.replace_holdings(conn, rows, s.load("sectors"), iso(now_ist()))
+        n, gone = repo.replace_holdings(conn, rows, s.load("sectors"), iso(now_ist()),
+                                        cash_like=s.load("risk").get("cash_like_symbols") or [])
         info["detail"] = f"{n} holdings"
     typer.echo(f"holdings: {n} written" + (f"; no longer held: {', '.join(gone)}" if gone else ""))
 
@@ -212,6 +223,8 @@ def fetch_prices(
                           f"{summary.downloaded} downloaded")
     typer.echo(f"prices: {summary.rows_written} rows over {summary.days_with_file} trading days "
                f"({summary.downloaded} files downloaded), latest close {summary.latest_date or 'none'}")
+    if summary.from_bse:
+        typer.echo(f"from BSE (not on NSE): {', '.join(sorted(summary.from_bse))}")
     if summary.unmatched:
         typer.secho(f"no bhavcopy rows for: {', '.join(sorted(summary.unmatched))} "
                     "(not NSE-listed, renamed, or a typo?)", fg=typer.colors.YELLOW)

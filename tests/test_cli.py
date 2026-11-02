@@ -42,6 +42,25 @@ def test_init_status_thesis_flow(home):
     assert "theses     1 validated" in r.output
 
 
+def test_status_asks_theses_and_sectors_for_equities_only(home):
+    from ltinv.config import get_settings
+    from ltinv.db import repo
+    from ltinv.db.repo import Holding
+
+    run(home, "init", "--no-git")
+    conn = repo.connect(get_settings(home).db_path)
+    repo.replace_holdings(conn, [
+        Holding("ACME", "NSE", "INE000A01011", 5, 100.0),
+        Holding("INDEXETF", "NSE", "INF000A01011", 5, 100.0),
+        Holding("SGBX-GB", "NSE", "IN0020200104", 1, 5000.0),
+    ], {}, "2026-11-02T18:30:00+05:30")
+    out = run(home, "status").output
+    assert "3 (1 equity, 1 fund, 1 govt; as of" in out
+    assert "equities without one: ACME" in out
+    assert "missing in config/sectors.yaml: ACME" in out
+    assert "none for: ACME, INDEXETF, SGBX-GB" in out
+
+
 def test_fetch_holdings_skips_without_session(home):
     run(home, "init", "--no-git")
     r = run(home, "fetch", "holdings")

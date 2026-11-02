@@ -70,7 +70,7 @@ def test_fetch_prices_caches_and_remembers_holidays(conn, tmp_path):
     assert s.unmatched == set()
     assert len(http.calls) == 2
     # 10-29 is older than 3 days with no file -> remembered as missing, never re-requested
-    assert bhavcopy.cache_path(tmp_path, date(2026, 10, 29)).with_suffix(".missing").exists()
+    assert bhavcopy.missing_path(tmp_path, date(2026, 10, 29)).exists()
 
     s2 = bhavcopy.fetch_prices(conn, tmp_path, {"RELIANCE": None, "TCS": None}, days,
                                today=date(2026, 11, 9), http=http, pause_s=0)

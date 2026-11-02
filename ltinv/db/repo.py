@@ -99,22 +99,30 @@ class Holding:
 
 
 def replace_holdings(
-    conn: sqlite3.Connection, holdings: Iterable[Holding], sectors: dict[str, str], as_of: str
+    conn: sqlite3.Connection, holdings: Iterable[Holding], sectors: dict[str, str], as_of: str,
+    cash_like: Iterable[str] = (),
 ) -> tuple[int, list[str]]:
     """Make `holdings` match the broker snapshot. Keeps first_buy_date; sector comes from
-    config/sectors.yaml. Returns (rows written, symbols no longer held)."""
+    config/sectors.yaml, asset class from the ISIN (see ltinv.instruments).
+    Returns (rows written, symbols no longer held)."""
+    from ltinv.instruments import asset_class
+
+    cash_like = list(cash_like)
     rows = [h for h in holdings if h.qty > 0]
     symbols = {h.symbol for h in rows}
     before = {r["symbol"] for r in conn.execute("SELECT symbol FROM holdings")}
     with conn:
         for h in rows:
             conn.execute(
-                """INSERT INTO holdings(symbol, exchange, isin, qty, avg_price, sector, as_of)
-                   VALUES (?,?,?,?,?,?,?)
+                """INSERT INTO holdings(symbol, exchange, isin, qty, avg_price, sector, as_of,
+                                        asset_class)
+                   VALUES (?,?,?,?,?,?,?,?)
                    ON CONFLICT(symbol) DO UPDATE SET exchange=excluded.exchange,
                      isin=excluded.isin, qty=excluded.qty, avg_price=excluded.avg_price,
-                     sector=excluded.sector, as_of=excluded.as_of""",
-                (h.symbol, h.exchange, h.isin, h.qty, h.avg_price, sectors.get(h.symbol), as_of),
+                     sector=excluded.sector, as_of=excluded.as_of,
+                     asset_class=excluded.asset_class""",
+                (h.symbol, h.exchange, h.isin, h.qty, h.avg_price, sectors.get(h.symbol), as_of,
+                 asset_class(h.symbol, h.isin, cash_like)),
             )
         gone = sorted(before - symbols)
         for sym in gone:

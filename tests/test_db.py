@@ -9,9 +9,9 @@ from ltinv.db.repo import Holding
 
 def test_migrate_is_idempotent(settings):
     c = repo.connect(settings.db_path)
-    assert repo.migrate(c) == ["0001_init.sql"]
+    assert repo.migrate(c) == ["0001_init.sql", "0002_asset_class.sql"]
     assert repo.migrate(c) == []
-    assert repo.schema_version(c) == 1
+    assert repo.schema_version(c) == 2
     tables = {r[0] for r in c.execute("SELECT name FROM sqlite_master WHERE type='table'")}
     assert {"holdings", "prices", "theses", "proposals", "approvals", "fills",
             "kite_sessions", "journal", "runs"} <= tables
