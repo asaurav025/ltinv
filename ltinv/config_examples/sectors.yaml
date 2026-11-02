@@ -1,6 +1,6 @@
 # Symbol -> sector, hand-maintained (Kite holdings carry no sector).
 # `ltinv status` lists holdings that have no sector yet.
+# This file reveals what you hold: it lives in your LTINV_HOME, never in the code repo.
+# Example entries:
 RELIANCE: Energy
 INFY: IT Services
-TCS: IT Services
-HDFCBANK: Banks

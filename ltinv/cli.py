@@ -12,7 +12,7 @@ import typer
 
 from ltinv import __version__
 from ltinv import thesis as thesis_mod
-from ltinv.config import CONFIG_FILES, ConfigError, Settings, get_settings
+from ltinv.config import CONFIG_FILES, ConfigError, Settings, get_settings, write_missing_config
 from ltinv.db import repo
 from ltinv.fetch import bhavcopy
 from ltinv.fetch import kite as kite_mod
@@ -69,11 +69,11 @@ def main(
 
 @app.command()
 def init(git: bool = typer.Option(True, help="Make data/ its own git repo.")) -> None:
-    """Create data/, apply DB migrations, check config. Safe to re-run."""
+    """Create config/ and data/, apply DB migrations. Safe to re-run."""
     s = settings()
-    missing = [n for n in CONFIG_FILES if not (s.config_dir / f"{n}.yaml").is_file()]
-    if missing:
-        fail(f"missing config in {s.config_dir}: {', '.join(m + '.yaml' for m in missing)}")
+    created = write_missing_config(s)
+    if created:
+        typer.echo(f"config    {s.config_dir}: created {', '.join(created)} from examples; review them")
     for name in CONFIG_FILES:
         try:
             s.load(name)

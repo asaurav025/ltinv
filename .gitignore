@@ -5,10 +5,13 @@ __pycache__/
 build/
 dist/
 
-# Secrets: only .env.example is tracked.
+# This repo is public. Personal state never lives in it:
+#   .env       Kite / Anthropic secrets
+#   /config/   your real config (sectors.yaml reveals holdings); examples ship in ltinv/config_examples/
+#   /data/     DB, theses, reviews, journal: its own private git repo
+# tests/test_public_repo.py fails CI if any of these get tracked.
 .env
 *.env
 !.env.example
-
-# data/ is its own private git repo (ltinv init creates it).
-data/
+/config/
+/data/

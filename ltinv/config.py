@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from importlib import resources
 from pathlib import Path
 from typing import Any
 
@@ -59,7 +60,7 @@ class Settings:
     def load(self, name: str) -> dict[str, Any]:
         path = self.config_dir / f"{name}.yaml"
         if not path.is_file():
-            raise ConfigError(f"missing config file: {path}")
+            raise ConfigError(f"missing config file: {path} (run `ltinv init` to create it)")
         try:
             data = yaml.safe_load(path.read_text()) or {}
         except yaml.YAMLError as exc:
@@ -80,6 +81,21 @@ class Settings:
         if not value:
             raise ConfigError(f"{key} is not set (put it in {self.home / '.env'})")
         return value
+
+
+def write_missing_config(settings: Settings) -> list[str]:
+    """Copy packaged example config for any file missing under <home>/config.
+    Your real config holds personal data (sectors = what you hold) and lives outside the
+    public code repo; existing files are never overwritten."""
+    settings.config_dir.mkdir(parents=True, exist_ok=True)
+    examples = resources.files("ltinv") / "config_examples"
+    written = []
+    for name in CONFIG_FILES:
+        target = settings.config_dir / f"{name}.yaml"
+        if not target.exists():
+            target.write_text((examples / f"{name}.yaml").read_text())
+            written.append(target.name)
+    return written
 
 
 def get_settings(home: str | Path | None = None) -> Settings:

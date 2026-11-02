@@ -62,7 +62,20 @@ def test_kite_login_without_key_fails_cleanly(home):
     assert r.exit_code == 1 and "KITE_API_KEY is not set" in r.output
 
 
-def test_init_reports_missing_config(home):
-    (home / "config" / "tax.yaml").unlink()
-    r = run(home, "init")
-    assert r.exit_code == 1 and "tax.yaml" in r.output
+def test_init_creates_missing_config_but_never_overwrites(tmp_path):
+    r = run(tmp_path, "init", "--no-git")
+    assert r.exit_code == 0, r.output
+    assert "created risk.yaml, red-flags.yaml, valuation.yaml, kite.yaml, tax.yaml, sectors.yaml" \
+        in r.output  # fresh home: all from examples
+
+    (tmp_path / "config" / "sectors.yaml").write_text("MYSTOCK: Chemicals\n")
+    (tmp_path / "config" / "tax.yaml").unlink()
+    r = run(tmp_path, "init", "--no-git")
+    assert "created tax.yaml from examples" in r.output
+    assert (tmp_path / "config" / "sectors.yaml").read_text() == "MYSTOCK: Chemicals\n"
+
+
+def test_init_rejects_broken_config(home):
+    (home / "config" / "risk.yaml").write_text("single_stock_max_pct: [unclosed\n")
+    r = run(home, "init", "--no-git")
+    assert r.exit_code == 1 and "risk.yaml" in r.output
